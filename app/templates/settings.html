@@ -113,7 +113,7 @@
 
   <fieldset class="panel">
     <legend>Промпты</legend>
-    <p class="muted small">Переменные: {title}, {language}, {transcript}, {i}, {n}, {structure} (в итоговом запросе — текст структуры подробного или краткого конспекта). Пишите таймкоды как [мм:сс] — ссылки из них делает приложение.</p>
+    <p class="muted small">Переменные: {title}, {language}, {transcript}, {i}, {n}, {start} и {end} (границы фрагмента), {structure} (в итоговом запросе — структура подробного или краткого конспекта). Таймкоды модель пишет в скобках, как в расшифровке, — ссылки из них делает приложение. У длинных видео раздел «Конспект» собирается из конспектов частей, итоговый запрос пишет остальные разделы.</p>
     {% for p in prompts %}
     <details class="prompt" {% if p.custom %}open{% endif %}>
       <summary>{{ p.title }} <code>{{ p.name }}.md</code>{% if p.custom %} <span class="pill pill--running">изменён</span>{% endif %}</summary>

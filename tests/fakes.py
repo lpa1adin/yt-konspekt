@@ -149,6 +149,7 @@ class FakeLLMServer:
     def __init__(self, models=("qwen3:8b",), reject_think: bool = False):
         self.models = list(models)
         self.reject_think = reject_think
+        self.drop_hours = False             # модель «теряет» часы: [1:05:30] → [05:30]
         self.requests: list[dict] = []
         self.fail_on: set[int] = set()      # номера chat-запросов (с 1), на которых вернуть 500
         self.length_on: set[int] = set()    # номера, где done_reason=length
@@ -206,6 +207,8 @@ class FakeLLMServer:
                     server.hold.wait(10)
                     user = payload["messages"][-1]["content"]
                     text = fake_answer(user)
+                    if server.drop_hours:
+                        text = re.sub(r"\[\d:(\d\d:\d\d)\]", r"[\1]", text)
                     pieces = [text[i:i + 40] for i in range(0, len(text), 40)]
                     reason = "length" if n in server.length_on else "stop"
                     if self.path == "/api/chat":

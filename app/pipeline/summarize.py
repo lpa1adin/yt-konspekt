@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 import datetime as dt
 import hashlib
 import json
@@ -148,6 +149,8 @@ def summarize(llm: LLMClient, transcript: str, title: str, language: str, detail
             save_cache(cache)
         return res.text
 
+    all_times = block_times(transcript)
+    end_time = (all_times[-1] + 30) if all_times else 0
     chunks = split_chunks(transcript, chunk_chars)
     n = len(chunks)
     if n == 1:
@@ -155,31 +158,107 @@ def summarize(llm: LLMClient, transcript: str, title: str, language: str, detail
         text = ask("single", render(prompts["final"], title=title, language=lang_name,
                                     structure=structure, transcript=transcript, i=1, n=1))
         on_progress(1.0, "готово")
-        return SummaryResult(text, truncated, 1)
+        return SummaryResult(repair_timecodes(text, all_times, 0, end_time), truncated, 1)
 
+    # 1. Конспект каждой части. Эти тексты и есть основной раздел «Конспект» итогового документа:
+    #    итоговый запрос их больше не пересказывает, иначе 4 часа видео ужимаются в один короткий ответ.
     steps = n + 1
-    partials: list[str] = []
+    parts: list[str] = []
     for i, ch in enumerate(chunks, 1):
         on_progress((i - 1) / steps, f"часть {i} из {n}")
-        partials.append(ask(f"chunk:{i}", render(prompts["chunk"], title=title, language=lang_name,
-                                                 transcript=ch, i=i, n=n)))
+        times = block_times(ch)
+        lo, hi = (times[0], times[-1] + 30) if times else (0, end_time)
+        raw = ask(f"chunk:{i}", render(prompts["chunk"], title=title, language=lang_name, transcript=ch,
+                                       i=i, n=n, start=fmt_ts(lo), end=fmt_ts(hi)))
+        parts.append(repair_timecodes(clean_part(raw), times, lo, hi))
+    body = "\n\n".join(p for p in parts if p)
+    section_times = block_times(body, anywhere=True) or all_times
 
-    # частичные конспекты не влезают в один запрос — сводим группами
+    # 2. Для итогового запроса части при необходимости сводятся группами — только как материал
+    #    для «Кратко», «Ключевых терминов» и «Выводов»; в документ сведённый текст не идёт.
+    material = parts
     rnd = 0
-    while sum(len(p) for p in partials) > chunk_chars and len(partials) > 1:
-        groups = split_chunks("\n\n".join(partials), chunk_chars)
-        if len(groups) >= len(partials):  # дальше не ужимается
+    while sum(len(p) for p in material) > chunk_chars and len(material) > 1:
+        groups = split_chunks("\n\n".join(material), chunk_chars)
+        if len(groups) >= len(material):  # дальше не ужимается
             break
         rnd += 1
         merged = []
         for j, g in enumerate(groups, 1):
-            on_progress(n / steps, f"свожу части: группа {j} из {len(groups)}")
+            on_progress(n / steps, f"свожу части для итогов: группа {j} из {len(groups)}")
             merged.append(ask(f"merge:{rnd}:{j}", render(prompts["merge"], title=title, language=lang_name,
                                                          transcript=g, i=j, n=len(groups))))
-        partials = merged
+        material = merged
 
+    # 3. Итоговый запрос. Для подробного конспекта модель пишет всё, кроме раздела «Конспект»,
+    #    а его код собирает из частей; краткий конспект целиком пишет модель.
+    full = detail == "full"
+    final_structure = without_section(structure, "Конспект") if full else structure
     on_progress(n / steps, "собираю итоговый конспект…")
-    text = ask("final", render(prompts["final"], title=title, language=lang_name, structure=structure,
-                               transcript="\n\n".join(partials), i=n, n=n))
+    text = ask("final", render(prompts["final"], title=title, language=lang_name, structure=final_structure,
+                               transcript="\n\n".join(material), i=n, n=n))
+    text = repair_timecodes(text, section_times, 0, end_time)
+    if full:
+        text = insert_section(text, "Конспект", body)
     on_progress(1.0, "готово")
     return SummaryResult(text, truncated, n)
+
+
+# ───────────────────────── проверка ответа модели ─────────────────────────
+
+_LINE_TS = re.compile(r"^\[(\d{1,2}:\d{2}(?::\d{2})?)\]")
+
+
+def block_times(text: str, anywhere: bool = False) -> list[int]:
+    """Секунды таймкодов: в начале строк расшифровки или (anywhere) в любом месте текста."""
+    rx = _TS_RE if anywhere else _LINE_TS
+    found = (rx.finditer(text) if anywhere else (rx.match(line) for line in text.splitlines()))
+    return sorted({ts_to_seconds(m.group(1)) for m in found if m})
+
+
+def repair_timecodes(md: str, valid: list[int], lo: int, hi: int) -> str:
+    """Чинит таймкоды, которые исказила модель, и привязывает их к реальным моментам видео.
+
+    Типичные ошибки: потерянные часы ([05:30] вместо [1:05:30]) и выдуманные отметки вне фрагмента.
+    Таймкод вне [lo, hi] сначала пробуем дополнить часами, затем берём ближайший блок расшифровки.
+    """
+    if not valid:
+        return md
+    valid = sorted(valid)
+
+    def nearest(x: int) -> int:
+        i = bisect.bisect_left(valid, x)
+        options = valid[max(0, i - 1):i + 1]
+        return min(options, key=lambda v: abs(v - x))
+
+    def fix(m: re.Match) -> str:
+        s = ts_to_seconds(m.group(1))
+        candidates = [s + 3600 * k for k in range(10) if lo <= s + 3600 * k <= hi]
+        target = candidates[0] if candidates else min(max(s, lo), hi)
+        return f"[{fmt_ts(nearest(target))}]"
+
+    return _TS_RE.sub(fix, md)
+
+
+def clean_part(text: str) -> str:
+    """Конспект части: убираем заголовки уровня #/## (модель иногда добавляет «## Конспект»)."""
+    lines = [ln for ln in text.splitlines() if not re.match(r"^#{1,2}\s", ln)]
+    return "\n".join(lines).strip()
+
+
+def _section_re(name: str) -> re.Pattern:
+    return re.compile(rf"^##\s+{re.escape(name)}\b.*?(?=^##\s|\Z)", flags=re.M | re.S)
+
+
+def without_section(structure: str, name: str) -> str:
+    return _section_re(name).sub("", structure).strip()
+
+
+def insert_section(text: str, name: str, body: str) -> str:
+    """Вставляет «## name» после раздела «Кратко» (раздел с тем же именем из ответа модели убирается)."""
+    text = _section_re(name).sub("", text).strip()
+    section = f"## {name}\n\n{body.strip()}\n\n"
+    m = re.search(r"^##\s+(?!Кратко\b)", text, flags=re.M)
+    if m:
+        return text[:m.start()] + section + text[m.start():]
+    return f"{text}\n\n{section}".strip()

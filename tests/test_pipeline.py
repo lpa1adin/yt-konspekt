@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.pipeline import Cancelled, LLMUnavailable, PipelineError
@@ -22,6 +24,8 @@ from app.pipeline.source import (
 )
 from app.pipeline.summarize import (
     SummaryCache,
+    insert_section,
+    repair_timecodes,
     build_document,
     extract_brief,
     linkify_timecodes,
@@ -277,3 +281,38 @@ def test_export_docx_pandoc(tmp_path):
         pytest.skip("pandoc не установлен")
     p = export_markdown("# T\n## A\n- b", tmp_path, "d", "docx", keep_markdown=True)
     assert p.suffix == ".docx" and (tmp_path / "d.md").exists()
+
+
+# ───────────── длинные видео: части не ужимаются, таймкоды настоящие ─────────────
+
+def test_repair_timecodes():
+    valid = list(range(3600, 5400, 30))           # фрагмент 1:00:00–1:29:30
+    assert repair_timecodes("### [05:30] x", valid, 3600, 5430) == "### [1:05:30] x"   # потерянный час
+    assert repair_timecodes("[1:10:00] и [70:00]", valid, 3600, 5430) == "[1:10:00] и [1:10:00]"
+    assert repair_timecodes("[00:20]", valid, 3600, 5430) == "[1:00:30]"    # выдумка → ближайший блок
+    assert repair_timecodes("[3:00:00]", valid, 3600, 5430) == "[1:29:30]"  # за пределами → край фрагмента
+    assert repair_timecodes("[00:05](https://youtu.be/x?t=5)", valid, 3600, 5430).endswith("?t=5)")
+
+
+def test_insert_section():
+    out = insert_section("## Кратко\nО курсе.\n\n## Конспект\n### [00:00] выдумка\n\n## Выводы\n- да",
+                         "Конспект", "### [1:00:00] Часть")
+    assert out == "## Кратко\nО курсе.\n\n## Конспект\n\n### [1:00:00] Часть\n\n## Выводы\n- да"
+
+
+def test_long_video_keeps_every_part_with_real_timecodes(llm_server):
+    llm_server.drop_hours = True
+    llm = LLMClient("ollama", "qwen3:8b", llm_server.url)
+    transcript = build_transcript(long_segments(150))           # лекция на 2,5 часа
+    res = summarize(llm, transcript, "Курс", "ru", "full", 20000, load_prompts())
+    md = res.markdown
+    assert res.parts >= 7
+    for i in range(1, res.parts + 1):                            # каждая часть попала в документ
+        assert f"Часть {i}" in md
+    assert "выдумка" not in md and "Начало" not in md            # раздел «Конспект» модели заменён частями
+    assert md.index("## Кратко") < md.index("## Конспект") < md.index("## Ключевые термины")
+    heads = [ts_to_seconds(t) for t in re.findall(r"^### \[([\d:]+)\]", md, flags=re.M)]
+    assert len(heads) == res.parts and heads == sorted(heads)    # таймкоды идут по порядку видео
+    assert heads[-1] > 2 * 3600                                  # часы восстановлены
+    final_req = llm_server.requests[-1]["messages"][1]["content"]
+    assert "## Ключевые термины" in final_req and "## Конспект" not in final_req
