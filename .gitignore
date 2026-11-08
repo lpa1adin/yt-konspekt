@@ -1,0 +1,59 @@
+# ─── Окружение Python ───
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# ─── Инструменты ───
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ─── Личные настройки и секреты ───
+# Свой config.toml держите в папке данных приложения; в репозитории — только config.example.toml
+config.toml
+!config.example.toml
+.env
+.env.*
+*.local.toml
+cookies.txt
+*cookies*.txt
+reference.docx
+
+# ─── Данные приложения (если YT_KONSPEKT_DATA указали внутрь проекта) ───
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+logs/
+*.log
+cache/
+
+# ─── Результаты работы: конспекты, аудио, архивы ───
+Конспекты/
+exports/
+*.docx
+*.pages
+*.webm
+*.m4a
+*.mp3
+*.wav
+*.opus
+*.zip
+
+# ─── Системное и редакторы ───
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+.claude/settings.local.json

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Состояние — YT-Конспект{% endblock %}
+{% block content %}
+<div class="section-head">
+  <h1>Состояние</h1>
+  <a class="btn btn--ghost btn--small" href="/status">Проверить снова</a>
+</div>
+{% if status.ok %}
+<p class="notice notice--ok">Всё готово к работе.</p>
+{% else %}
+<p class="notice notice--warn">Пройдите по пунктам с красной отметкой сверху вниз — подсказка под каждым.</p>
+{% endif %}
+<ul class="checks">
+  {% for c in status.checks %}
+  <li class="check-item check-item--{{ 'ok' if c.ok else ('na' if c.ok is none else 'bad') }}">
+    <span class="check-item__icon" aria-hidden="true">{{ '✓' if c.ok else ('–' if c.ok is none else '✕') }}</span>
+    <div class="check-item__body">
+      <div class="check-item__label">{{ c.label }} <span class="muted">— {{ c.detail }}</span></div>
+      {% if c.hint %}<div class="check-item__hint">{{ c.hint }}</div>{% endif %}
+      {% if c.action == 'pull' %}
+      <div class="pull" data-model="{{ status.model }}">
+        <button class="btn btn--primary btn--small" type="button" data-pull-model="{{ status.model }}">Скачать модель {{ status.model }}</button>
+        <div class="progress" hidden><div class="progress__bar" style="width:0%"></div></div>
+        <small class="muted pull__msg"></small>
+      </div>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+
+{% if status.backend == 'ollama' and status.models %}
+<section class="panel">
+  <h2>Модели в Ollama</h2>
+  <p class="muted small">Любую из них можно выбрать при создании конспекта или в настройках.</p>
+  <ul class="tags">{% for m in status.models %}<li>{{ m }}</li>{% endfor %}</ul>
+  <form class="inline pull" id="pull-other">
+    <input type="text" name="name" placeholder="например, qwen3:14b или gemma3:12b" aria-label="Имя модели">
+    <button class="btn btn--small" type="submit">Скачать</button>
+    <div class="progress" hidden><div class="progress__bar" style="width:0%"></div></div>
+    <small class="muted pull__msg"></small>
+  </form>
+</section>
+{% endif %}
+<p class="muted small">Папка данных: {{ status.data_dir }} · журнал: logs/app.log</p>
+{% endblock %}

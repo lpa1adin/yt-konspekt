@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Настройки — YT-Конспект{% endblock %}
+{% block content %}
+<div class="section-head">
+  <h1>Настройки</h1>
+  {% if saved %}<span class="notice notice--ok inline-notice">Сохранено</span>{% endif %}
+</div>
+<form method="post" action="/settings" class="settings" id="settings-form">
+  <fieldset class="panel">
+    <legend>Сохранение файлов</legend>
+    <div class="form-grid">
+      <label class="span-2">Папка по умолчанию
+        <span class="input-row">
+          <input type="text" name="output_dir" id="s_output_dir" value="{{ cfg.output_dir }}" data-check-folder>
+          <button class="btn" type="button" data-pick-folder="s_output_dir">Выбрать…</button>
+        </span>
+        <small class="field-msg" data-for="s_output_dir"></small>
+      </label>
+      <label>Формат
+        <select name="format">{% for f in formats %}<option value="{{ f }}" {% if cfg.format == f %}selected{% endif %}>.{{ f }}</option>{% endfor %}</select>
+      </label>
+      <label>Имя файла
+        <input type="text" name="filename_template" value="{{ cfg.filename_template }}" list="name-templates">
+        <datalist id="name-templates">
+          <option value="{title}"><option value="{date} {title}"><option value="{channel}/{title}">
+        </datalist>
+        <small class="muted">{title}, {channel}, {date}, {id}; «/» — подпапка</small>
+      </label>
+      <label class="check"><input type="checkbox" name="auto_export" value="1" {% if cfg.auto_export %}checked{% endif %}> Сохранять файл сразу после готовности</label>
+      <label class="check"><input type="checkbox" name="keep_markdown" value="1" {% if cfg.keep_markdown %}checked{% endif %}> Оставлять .md рядом с .docx / .pages</label>
+      <label class="span-2">Шаблон стилей .docx (reference.docx для pandoc, необязательно)
+        <input type="text" name="docx_template" value="{{ cfg.docx_template }}" placeholder="~/Documents/reference.docx">
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset class="panel">
+    <legend>Конспект</legend>
+    <div class="form-grid">
+      <label>Язык конспекта
+        <select name="language">{% for v, t in languages %}<option value="{{ v }}" {% if cfg.language == v %}selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+      </label>
+      <label>Подробность
+        <select name="detail">{% for v, t in details %}<option value="{{ v }}" {% if cfg.detail == v %}selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset class="panel">
+    <legend>Локальная модель (LLM)</legend>
+    <div class="form-grid">
+      <label>Сервер
+        <select name="llm_backend" id="llm_backend">
+          <option value="ollama" {% if cfg.llm.backend == 'ollama' %}selected{% endif %}>Ollama</option>
+          <option value="openai" {% if cfg.llm.backend == 'openai' %}selected{% endif %}>OpenAI-совместимый (LM Studio, llama.cpp)</option>
+        </select>
+      </label>
+      <label>Адрес
+        <input type="text" name="llm_base_url" value="{{ cfg.llm.base_url }}" placeholder="http://localhost:11434">
+        <small class="muted">Ollama: http://localhost:11434 · LM Studio: http://localhost:1234/v1</small>
+      </label>
+      <label>Модель по умолчанию
+        <input type="text" name="llm_model" value="{{ cfg.llm.model }}" list="model-list">
+        <datalist id="model-list">{% for m in models %}<option value="{{ m }}">{% endfor %}</datalist>
+      </label>
+      <label>Контекст, токенов (num_ctx)
+        <input type="number" name="llm_num_ctx" value="{{ cfg.llm.num_ctx }}" min="2048" step="1024">
+      </label>
+      <label>Размер части, символов (chunk_chars)
+        <input type="number" name="llm_chunk_chars" value="{{ cfg.llm.chunk_chars }}" min="2000" step="1000">
+        <small class="muted">Ответ обрезается — уменьшите. 18 000 ≈ 30–40 минут речи.</small>
+      </label>
+      <label>Температура
+        <input type="number" name="llm_temperature" value="{{ cfg.llm.temperature }}" min="0" max="2" step="0.1">
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset class="panel">
+    <legend>Распознавание речи и субтитры</legend>
+    <div class="form-grid">
+      <label>Движок Whisper
+        <select name="whisper_engine">
+          {% for v, t in [('auto', 'Авто (mlx на Mac M, иначе faster-whisper)'), ('mlx', 'mlx-whisper'), ('faster', 'faster-whisper')] %}
+          <option value="{{ v }}" {% if cfg.whisper.engine == v %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Модель Whisper
+        <select name="whisper_model">
+          {% for v, t in [('large-v3-turbo', 'large-v3-turbo — точно, ~2 ГБ'), ('medium', 'medium — быстрее'), ('small', 'small — самая быстрая')] %}
+          <option value="{{ v }}" {% if cfg.whisper.model == v %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Язык речи
+        <input type="text" name="whisper_language" value="{{ cfg.whisper.language }}" placeholder="пусто — определить автоматически">
+      </label>
+      <label>Языки субтитров (по приоритету)
+        <input type="text" name="subtitles_langs" value="{{ cfg.subtitles.langs|join(', ') }}">
+      </label>
+      <label class="check"><input type="checkbox" name="subtitles_use" value="1" {% if cfg.subtitles.use %}checked{% endif %}> Брать субтитры YouTube, если есть</label>
+      <label class="check"><input type="checkbox" name="keep_audio" value="1" {% if cfg.keep_audio %}checked{% endif %}> Не удалять скачанное аудио</label>
+      <label class="span-2">Cookies из браузера (если YouTube просит войти или «подтвердить, что вы не бот»)
+        <select name="cookies_from_browser">
+          {% for v, t in [('', 'не использовать'), ('safari', 'Safari'), ('chrome', 'Chrome'), ('firefox', 'Firefox'), ('edge', 'Edge'), ('brave', 'Brave')] %}
+          <option value="{{ v }}" {% if cfg.cookies_from_browser == v %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset class="panel">
+    <legend>Промпты</legend>
+    <p class="muted small">Переменные: {title}, {language}, {transcript}, {i}, {n}, {structure} (в итоговом запросе — текст структуры подробного или краткого конспекта). Пишите таймкоды как [мм:сс] — ссылки из них делает приложение.</p>
+    {% for p in prompts %}
+    <details class="prompt" {% if p.custom %}open{% endif %}>
+      <summary>{{ p.title }} <code>{{ p.name }}.md</code>{% if p.custom %} <span class="pill pill--running">изменён</span>{% endif %}</summary>
+      <textarea name="prompt_{{ p.name }}" id="prompt_{{ p.name }}" rows="10" spellcheck="false">{{ p.text }}</textarea>
+      <button class="btn btn--small btn--ghost" type="button" data-reset-prompt="{{ p.name }}">Сбросить к умолчанию</button>
+    </details>
+    {% endfor %}
+  </fieldset>
+
+  <div class="form-actions sticky-actions">
+    <button class="btn btn--primary" type="submit">Сохранить</button>
+    <span class="muted small">Данные приложения: {{ data_dir }}</span>
+  </div>
+</form>
+{% endblock %}

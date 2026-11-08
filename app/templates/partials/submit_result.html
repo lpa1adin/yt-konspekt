@@ -1,0 +1,24 @@
+{% if created %}
+<p class="notice notice--ok">В очереди: {{ created|length }} {% if created|length == 1 %}видео{% else %}видео{% endif %}. Прогресс — ниже.</p>
+{% endif %}
+{% for s in skipped %}
+<div class="notice notice--warn">
+  {% if s.reason == 'уже в библиотеке' %}
+    «{{ s.title }}» уже есть в библиотеке.
+    <a href="/videos/{{ s.video_id }}">Открыть конспект</a>
+    <form class="inline" hx-post="/api/jobs" hx-target="#submit-result">
+      <input type="hidden" name="urls" value="{{ s.url }}">
+      <input type="hidden" name="force" value="1">
+      {% for k in ('detail', 'language', 'model', 'format', 'out_dir', 'force_whisper') %}
+        {% if body.get(k) %}<input type="hidden" name="{{ k }}" value="{{ body.get(k) }}">{% endif %}
+      {% endfor %}
+      <button class="btn btn--small btn--ghost" type="submit">Всё равно сделать новую версию</button>
+    </form>
+  {% else %}
+    {{ s.url }} — {{ s.reason }}.
+  {% endif %}
+</div>
+{% endfor %}
+{% for e in errors %}
+<p class="notice notice--error">{% if e.url %}<b>{{ e.url }}</b>: {% endif %}{{ e.error }}</p>
+{% endfor %}

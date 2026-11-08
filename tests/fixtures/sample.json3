@@ -1,0 +1,8 @@
+{"events": [
+  {"tStartMs": 0, "dDurationMs": 4000, "segs": [{"utf8": "Привет, это "}, {"utf8": "тестовое видео"}]},
+  {"tStartMs": 4000, "dDurationMs": 10, "aAppend": 1, "segs": [{"utf8": "\n"}]},
+  {"tStartMs": 5000},
+  {"tStartMs": 12500, "segs": [{"utf8": "про фотосинтез"}]},
+  {"tStartMs": 31000, "segs": [{"utf8": "Хлорофилл\nпоглощает свет"}]},
+  {"tStartMs": 65000, "segs": [{"utf8": "   "}]}
+]}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Библиотека — YT-Конспект{% endblock %}
+{% block content %}
+<div class="section-head">
+  <h1>Библиотека</h1>
+</div>
+<form class="filters" hx-get="/library" hx-target="#library-grid" hx-swap="outerHTML" hx-push-url="true"
+  hx-trigger="input changed delay:300ms from:#q, change, submit">
+  <label class="filters__search">
+    <span class="visually-hidden">Поиск</span>
+    <input type="search" id="q" name="q" value="{{ q }}" placeholder="Поиск по конспектам и расшифровкам…" autocomplete="off">
+  </label>
+  <label><span class="visually-hidden">Канал</span>
+    <select name="channel">
+      <option value="">Все каналы</option>
+      {% for c in channels %}<option value="{{ c }}" {% if c == channel %}selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select>
+  </label>
+  <label><span class="visually-hidden">Период</span>
+    <select name="period">
+      <option value="" {% if not period %}selected{% endif %}>За всё время</option>
+      <option value="week" {% if period == 'week' %}selected{% endif %}>За неделю</option>
+      <option value="month" {% if period == 'month' %}selected{% endif %}>За месяц</option>
+      <option value="year" {% if period == 'year' %}selected{% endif %}>За год</option>
+    </select>
+  </label>
+  <label><span class="visually-hidden">Сортировка</span>
+    <select name="sort">
+      <option value="new" {% if sort == 'new' %}selected{% endif %}>Сначала новые</option>
+      <option value="old" {% if sort == 'old' %}selected{% endif %}>Сначала старые</option>
+      <option value="title" {% if sort == 'title' %}selected{% endif %}>По названию</option>
+    </select>
+  </label>
+</form>
+{% include "partials/library_grid.html" %}
+{% endblock %}

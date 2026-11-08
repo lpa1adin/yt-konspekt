@@ -1,0 +1,7 @@
+<div id="jobs" class="jobs" hx-get="/partials/jobs" hx-trigger="jobs-changed from:body" hx-swap="outerHTML">
+  {% for job in jobs %}
+    {% include "partials/job_card.html" %}
+  {% else %}
+    <p class="empty">Задач пока нет. Вставьте ссылку выше — конспект появится здесь и в библиотеке.</p>
+  {% endfor %}
+</div>

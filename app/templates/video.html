@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}{{ video.title }} — YT-Конспект{% endblock %}
+{% block content %}
+<div class="video-page" data-video-id="{{ video.id }}">
+  <header class="video-head">
+    <h1>{{ video.title }}</h1>
+    <p class="muted">
+      {% if video.channel %}{{ video.channel }} · {% endif %}{% if video.duration_s %}{{ fmt_ts(video.duration_s) }} · {% endif %}
+      <a href="https://www.youtube.com/watch?v={{ video.id }}" target="_blank" rel="noopener">Открыть на YouTube ↗</a>
+    </p>
+    <div class="toolbar">
+      {% if versions %}
+      <label class="version-select">
+        <span class="visually-hidden">Версия конспекта</span>
+        <select id="version-select" aria-label="Версия конспекта">
+          {% for s in versions %}
+          <option value="{{ s.version }}" {% if summary and s.id == summary.id %}selected{% endif %}>
+            Версия {{ s.version }} · {{ s.model }} · {{ 'подробный' if s.detail == 'full' else 'краткий' }}{% if s.is_edited %} · правка{% endif %} · {{ s.created_at[:16]|replace('T', ' ') }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+      <button class="btn" type="button" data-open-dialog="redo-dialog" {% if active_job %}disabled title="Дождитесь окончания задачи"{% endif %}>Переделать</button>
+      {% if summary %}
+      <button class="btn" type="button" id="edit-toggle">Редактировать</button>
+      <button class="btn" type="button" data-open-dialog="export-dialog">Экспорт</button>
+      {% endif %}
+      {% if exports %}
+      <button class="btn btn--ghost" type="button" data-export-id="{{ exports[0].id }}" data-export-action="reveal">Показать в папке</button>
+      {% endif %}
+      <button class="btn btn--ghost btn--danger" type="button" hx-delete="/api/videos/{{ video.id }}"
+        hx-confirm="Удалить «{{ video.title }}» из библиотеки? Файлы экспорта на диске останутся.">Удалить</button>
+    </div>
+    <div id="redo-slot" data-reload-on-done>
+      {% if active_job %}{% with job = active_job %}{% include "partials/job_card.html" %}{% endwith %}{% endif %}
+    </div>
+  </header>
+
+  <div class="two-col">
+    <div class="col-main">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-tab="tab-summary">Конспект</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="tab-transcript">Расшифровка{% if blocks %} <span class="muted">· {{ blocks|length }}</span>{% endif %}</button>
+      </div>
+
+      <section id="tab-summary" class="tab-panel" role="tabpanel">
+        {% if summary %}
+        <article class="md" id="summary-view">{{ html|safe }}</article>
+        <div id="editor" class="editor" hidden>
+          <p class="muted small">Markdown. Новые таймкоды пишите как [мм:сс] — при сохранении они станут ссылками на видео.</p>
+          <textarea id="md-editor" spellcheck="true">{{ summary.markdown }}</textarea>
+          <div class="form-actions">
+            <button class="btn btn--primary" type="button" id="save-edit" data-summary-id="{{ summary.id }}">Сохранить как новую версию</button>
+            <button class="btn btn--ghost" type="button" id="cancel-edit">Отмена</button>
+          </div>
+        </div>
+        {% else %}
+        <p class="empty">Конспекта ещё нет.{% if transcript %} Нажмите «Переделать», чтобы составить его по сохранённой расшифровке.{% endif %}</p>
+        {% endif %}
+      </section>
+
+      <section id="tab-transcript" class="tab-panel transcript" role="tabpanel" hidden>
+        {% if transcript %}
+        <div class="transcript__head">
+          <span class="muted">Источник: {{ 'распознавание Whisper, ' if transcript.source == 'whisper' }}{{ transcript.source_detail }}</span>
+          <label class="check"><input type="checkbox" id="follow-player" checked> следовать за видео</label>
+        </div>
+        {% for b in blocks %}
+        <p class="tblock" data-t="{{ b.t }}"><a class="ts" href="https://youtu.be/{{ video.id }}?t={{ b.t }}">{{ b.ts }}</a> {{ b.text }}</p>
+        {% endfor %}
+        {% else %}
+        <p class="empty">Расшифровки нет.</p>
+        {% endif %}
+      </section>
+    </div>
+
+    <aside class="col-side">
+      <div class="sticky">
+        <div class="player-box"><div id="player" data-video-id="{{ video.id }}"></div></div>
+        <p class="muted small">Клик по таймкоду перематывает видео здесь.</p>
+        {% if exports %}
+        <div class="exports">
+          <h3>Файлы</h3>
+          <ul>
+            {% for e in exports[:6] %}
+            <li>
+              <span class="exports__name" title="{{ e.path }}">{{ e.name }}</span>
+              <span class="muted small">v{{ e.version }} · {{ e.created_at[:10] }}</span>
+              <button class="link-btn" type="button" data-export-id="{{ e.id }}" data-export-action="open">открыть</button>
+              <button class="link-btn" type="button" data-export-id="{{ e.id }}" data-export-action="reveal">в папке</button>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      </div>
+    </aside>
+  </div>
+
+  <dialog id="redo-dialog" class="dialog">
+    <form hx-post="/api/videos/{{ video.id }}/summaries" hx-target="#redo-slot" hx-swap="innerHTML" data-close-dialog-on-submit>
+      <h2>Переделать конспект</h2>
+      <p class="muted">Расшифровка сохранена — Whisper заново не запускается.</p>
+      <div class="form-grid">
+        <label>Подробность
+          <select name="detail">{% for v, t in details %}<option value="{{ v }}" {% if (summary.detail if summary else cfg.detail) == v %}selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+        </label>
+        <label>Язык
+          <select name="language">{% for v, t in languages %}<option value="{{ v }}" {% if (summary.language if summary else cfg.language) == v %}selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+        </label>
+        <label class="span-2">Модель
+          <select name="model">{% for m in models %}<option value="{{ m }}" {% if cfg.llm.model == m %}selected{% endif %}>{{ m }}</option>{% endfor %}</select>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Поставить в очередь</button>
+        <button class="btn btn--ghost" type="button" data-close-dialog>Отмена</button>
+      </div>
+    </form>
+  </dialog>
+
+  {% if summary %}
+  <dialog id="export-dialog" class="dialog">
+    <form id="export-form" data-summary-id="{{ summary.id }}">
+      <h2>Экспорт версии {{ summary.version }}</h2>
+      <div class="form-grid">
+        <label class="span-2">Формат
+          <select name="format">{% for f in formats %}<option value="{{ f }}" {% if cfg.format == f %}selected{% endif %}>.{{ f }}</option>{% endfor %}</select>
+        </label>
+        <label class="span-2">Папка
+          <span class="input-row">
+            <input type="text" name="out_dir" id="export_dir" value="{{ cfg.output_dir }}" data-check-folder>
+            <button class="btn" type="button" data-pick-folder="export_dir">Выбрать…</button>
+          </span>
+          <small class="field-msg" data-for="export_dir"></small>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Сохранить файл</button>
+        <button class="btn btn--ghost" type="button" data-close-dialog>Отмена</button>
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/player.js?v={{ version }}" defer></script>{% endblock %}

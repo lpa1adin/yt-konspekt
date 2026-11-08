@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}YT-Конспект{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23c2410c'/><path d='M12 9l11 7-11 7z' fill='white'/></svg>">
+  <script>
+    (function () {
+      var t = localStorage.getItem("theme");
+      if (t) document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/app.css?v={{ version }}">
+  <script src="/static/js/htmx.min.js"></script>
+  <script>
+    // htmx лежит в static/js; если файла нет — загружаем с CDN (см. README)
+    window.htmx || document.write('<script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"><\/script>');
+  </script>
+  <script src="/static/js/app.js?v={{ version }}" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body data-page="{{ nav }}">
+  <header class="topbar">
+    <a class="logo" href="/"><span class="logo__mark" aria-hidden="true">▶</span>YT-Конспект</a>
+    <nav class="nav" aria-label="Разделы">
+      <a href="/" {% if nav == 'index' %}aria-current="page"{% endif %}>Новый конспект</a>
+      <a href="/library" {% if nav in ('library', 'video') %}aria-current="page"{% endif %}>Библиотека</a>
+      <a href="/settings" {% if nav == 'settings' %}aria-current="page"{% endif %}>Настройки</a>
+      <a href="/status" {% if nav == 'status' %}aria-current="page"{% endif %}>Состояние</a>
+    </nav>
+    <button class="icon-btn" id="theme-toggle" type="button" title="Светлая / тёмная тема" aria-label="Сменить тему">◐</button>
+  </header>
+  {% if waiting %}
+  <div class="banner banner--warn" role="status">
+    <span>{{ waiting.message }}</span>
+    <a href="/status">Открыть «Состояние»</a>
+    <button class="btn btn--small" type="button" hx-post="/api/retry-waiting" hx-swap="none">Проверить снова</button>
+  </div>
+  {% endif %}
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

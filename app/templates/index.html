@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel new-job">
+  <h1>Новый конспект</h1>
+  <form id="new-job" hx-post="/api/jobs" hx-target="#submit-result" hx-swap="innerHTML">
+    <label class="visually-hidden" for="urls">Ссылки на YouTube</label>
+    <textarea id="urls" name="urls" rows="3" required autofocus
+      placeholder="Вставьте ссылку на видео YouTube и нажмите Enter. Несколько ссылок — по одной на строку (Shift+Enter — новая строка)."></textarea>
+    <details class="params">
+      <summary>Параметры</summary>
+      <div class="form-grid">
+        <label>Подробность
+          <select name="detail">
+            {% for v, t in details %}<option value="{{ v }}" {% if cfg.detail == v %}selected{% endif %}>{{ t }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Язык конспекта
+          <select name="language">
+            {% for v, t in languages %}<option value="{{ v }}" {% if cfg.language == v %}selected{% endif %}>{{ t }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Модель
+          <select name="model">
+            {% for m in models %}<option value="{{ m }}" {% if cfg.llm.model == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Файл
+          <select name="format">
+            <option value="none" {% if not cfg.auto_export %}selected{% endif %}>без файла (только библиотека)</option>
+            {% for f in formats %}<option value="{{ f }}" {% if cfg.auto_export and cfg.format == f %}selected{% endif %}>.{{ f }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="span-2">Папка сохранения
+          <span class="input-row">
+            <input type="text" name="out_dir" id="out_dir" value="{{ cfg.output_dir }}" data-check-folder>
+            <button class="btn" type="button" data-pick-folder="out_dir">Выбрать…</button>
+          </span>
+          <small class="field-msg" data-for="out_dir"></small>
+        </label>
+        <label class="check span-2">
+          <input type="checkbox" name="force_whisper" value="1">
+          Всегда распознавать речь Whisper (не брать субтитры YouTube)
+        </label>
+      </div>
+    </details>
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Сделать конспект</button>
+      <span class="htmx-indicator muted">отправляю…</span>
+    </div>
+  </form>
+  <div id="submit-result"></div>
+</section>
+
+<section class="jobs-section">
+  <div class="section-head">
+    <h2>Задачи</h2>
+    <button class="btn btn--ghost btn--small" type="button" hx-post="/api/jobs/clear" hx-target="#jobs" hx-swap="outerHTML">Убрать завершённые</button>
+  </div>
+  {% include "partials/jobs.html" %}
+</section>
+{% endblock %}

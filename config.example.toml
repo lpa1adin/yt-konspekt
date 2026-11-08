@@ -1,0 +1,31 @@
+# Необязательный файл настроек. Скопируйте в папку данных приложения как config.toml:
+#   macOS:   ~/Library/Application Support/yt-konspekt/config.toml
+#   Linux:   ~/.local/share/yt-konspekt/config.toml
+#   Windows: %LOCALAPPDATA%\yt-konspekt\config.toml
+# Порядок: значения по умолчанию → этот файл → экран «Настройки» → параметры задачи.
+
+output_dir = "~/Documents/Конспекты"
+format = "docx"              # md | docx | pages (pages — только macOS)
+auto_export = true
+filename_template = "{title}" # {title} {channel} {date} {id}; «/» — подпапка
+language = "ru"
+detail = "full"              # full | short
+keep_audio = false
+cookies_from_browser = ""    # safari | chrome | firefox — если YouTube просит войти
+
+[llm]
+backend = "ollama"           # ollama | openai (LM Studio: base_url = "http://localhost:1234/v1")
+model = "qwen3:8b"
+base_url = "http://localhost:11434"
+num_ctx = 16384
+temperature = 0.3
+chunk_chars = 18000
+
+[whisper]
+engine = "auto"              # auto | mlx | faster
+model = "large-v3-turbo"     # medium, small — быстрее
+language = ""
+
+[subtitles]
+use = true
+langs = ["ru", "en"]

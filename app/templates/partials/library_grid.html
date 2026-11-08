@@ -1,0 +1,17 @@
+<div id="library-grid" class="grid">
+  {% for it in items %}
+  <a class="card" href="/videos/{{ it.id }}">
+    <div class="card__thumb">
+      {% if it.thumbnail_url %}<img src="{{ it.thumbnail_url }}" alt="" loading="lazy">{% endif %}
+      {% if it.duration_s %}<span class="card__dur">{{ fmt_ts(it.duration_s) }}</span>{% endif %}
+    </div>
+    <div class="card__body">
+      <h3 class="card__title">{{ it.title }}</h3>
+      <div class="muted small">{{ it.channel }}{% if it.channel %} · {% endif %}{{ it.added_at[:10] }}{% if it.versions > 1 %} · версий: {{ it.versions }}{% endif %}</div>
+      <p class="card__text">{% if it.snippet_html %}{{ it.snippet_html|safe }}{% else %}{{ it.brief }}{% endif %}</p>
+    </div>
+  </a>
+  {% else %}
+  <p class="empty">{% if q %}Ничего не нашлось по запросу «{{ q }}».{% else %}Библиотека пуста. <a href="/">Сделайте первый конспект</a>.{% endif %}</p>
+  {% endfor %}
+</div>

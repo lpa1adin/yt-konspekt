@@ -1,0 +1,44 @@
+{% set active = job.status in ('queued', 'running') %}
+<article class="job job--{{ job.status }}{% if job.waiting %} job--waiting{% endif %}" id="job-{{ job.id }}"
+  data-job-id="{{ job.id }}" data-status="{{ job.status }}">
+  <div class="job__thumb">
+    {% if job.thumbnail_url %}<img src="{{ job.thumbnail_url }}" alt="" loading="lazy">{% endif %}
+  </div>
+  <div class="job__body">
+    <div class="job__title">
+      {% if job.video_id and job.status == 'done' %}<a href="/videos/{{ job.video_id }}">{{ job.title or job.url }}</a>
+      {% else %}{{ job.title or job.url }}{% endif %}
+    </div>
+    <div class="job__meta">
+      <span class="pill pill--{{ job.status }}" data-role="status">{{ job.status_title }}</span>
+      <span data-role="stage">{% if active %}{{ job.stage_title }}{% endif %}</span>
+      {% if job.kind == 'resummarize' %}<span class="muted">· переделка</span>{% endif %}
+      {% if job.params.model %}<span class="muted">· {{ job.params.model }}</span>{% endif %}
+    </div>
+    <div class="progress" {% if not active %}hidden{% endif %}>
+      <div class="progress__bar" data-role="bar" style="width: {{ job.percent }}%"></div>
+    </div>
+    <div class="job__msg" data-role="message">{{ job.message }}</div>
+    <pre class="job__stream" data-role="stream" hidden></pre>
+    {% if job.error and job.status in ('failed', 'done') %}
+    <details class="job__error"><summary>Подробнее</summary><pre>{{ job.error }}</pre></details>
+    {% endif %}
+    <div class="job__actions">
+      {% if active %}
+        {% if job.waiting %}
+        <button class="btn btn--small" type="button" hx-post="/api/jobs/{{ job.id }}/retry" hx-target="#job-{{ job.id }}" hx-swap="outerHTML">Проверить снова</button>
+        <a class="btn btn--small btn--ghost" href="/status">Состояние</a>
+        {% endif %}
+        <button class="btn btn--small btn--ghost" type="button" hx-post="/api/jobs/{{ job.id }}/cancel" hx-target="#job-{{ job.id }}" hx-swap="outerHTML">Отменить</button>
+      {% elif job.status in ('failed', 'cancelled') %}
+        <button class="btn btn--small" type="button" hx-post="/api/jobs/{{ job.id }}/retry" hx-target="#job-{{ job.id }}" hx-swap="outerHTML">Повторить</button>
+      {% endif %}
+      {% if job.status == 'done' and job.video_id %}
+        <a class="btn btn--small btn--primary" href="/videos/{{ job.video_id }}">Открыть</a>
+        {% if job.export_path %}
+        <button class="btn btn--small btn--ghost" type="button" data-path-action="reveal" data-path="{{ job.export_path }}">Показать в папке</button>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</article>
