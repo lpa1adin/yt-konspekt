@@ -149,6 +149,9 @@ class FakeLLMServer:
     def __init__(self, models=("qwen3:8b",), reject_think: bool = False):
         self.models = list(models)
         self.reject_think = reject_think
+        self.require_key = ""               # ожидаемый ключ (Authorization: Bearer …) для /v1
+        self.reject_temperature = False     # как GPT-5: 400 на любой temperature
+        self.auth_headers: list[str] = []
         self.drop_hours = False             # модель «теряет» часы: [1:05:30] → [05:30]
         self.requests: list[dict] = []
         self.fail_on: set[int] = set()      # номера chat-запросов (с 1), на которых вернуть 500
@@ -176,7 +179,16 @@ class FakeLLMServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _auth_ok(self) -> bool:
+                if not self.path.startswith("/v1") or not server.require_key:
+                    return True
+                got = self.headers.get("Authorization", "")
+                server.auth_headers.append(got)
+                return got == f"Bearer {server.require_key}"
+
             def do_GET(self):
+                if not self._auth_ok():
+                    return self._json(401, {"error": {"message": "invalid api key"}})
                 if self.path == "/api/tags":
                     return self._json(200, {"models": [{"name": n} for n in server.models]})
                 if self.path == "/v1/models":
@@ -186,6 +198,10 @@ class FakeLLMServer:
             def do_POST(self):
                 ln = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(ln) or b"{}")
+                if not self._auth_ok():
+                    return self._json(401, {"error": {"message": "invalid api key"}})
+                if self.path == "/v1/chat/completions" and server.reject_temperature and "temperature" in payload:
+                    return self._json(400, {"error": {"message": "Unsupported value: 'temperature'"}})
                 if self.path == "/api/generate":
                     server.unloads += 1
                     return self._json(200, {"done": True})
@@ -257,3 +273,71 @@ class FakeLLMServer:
         self.hold.set()
         self.httpd.shutdown()
         self.httpd.server_close()
+
+
+# ───────────────────────── фейковый SDK Anthropic ─────────────────────────
+
+def make_fake_anthropic(text: str = "## Кратко\nОтвет Claude [00:05].", stop_reason: str = "end_turn",
+                        models=("claude-opus-5-5", "claude-sonnet-5-5")):
+    """Минимальная подмена пакета `anthropic`: messages.stream / beta.messages.stream / models.list."""
+    import types
+
+    mod = types.ModuleType("anthropic")
+    mod.calls = []
+
+    class APIError(Exception):
+        def __init__(self, message="", status_code=0):
+            super().__init__(message)
+            self.message = message
+            self.status_code = status_code
+
+    class APIStatusError(APIError):
+        pass
+
+    for name in ("AuthenticationError", "PermissionDeniedError", "NotFoundError", "RateLimitError",
+                 "BadRequestError"):
+        setattr(mod, name, type(name, (APIStatusError,), {}))
+    mod.APIStatusError = APIStatusError
+    mod.APIConnectionError = type("APIConnectionError", (APIError,), {})
+
+    class Stream:
+        def __init__(self):
+            self.closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        @property
+        def text_stream(self):
+            for i in range(0, len(text), 7):
+                yield text[i:i + 7]
+
+        def get_final_message(self):
+            return types.SimpleNamespace(stop_reason=stop_reason)
+
+        def close(self):
+            self.closed = True
+
+    class Messages:
+        def __init__(self, beta=False):
+            self.beta = beta
+
+        def stream(self, **kw):
+            mod.calls.append({"beta": self.beta, **kw})
+            if mod.client_kwargs.get("api_key") == "bad":
+                raise mod.AuthenticationError("invalid x-api-key", 401)
+            return Stream()
+
+    class Anthropic:
+        def __init__(self, **kw):
+            mod.client_kwargs = kw
+            self.messages = Messages()
+            self.beta = types.SimpleNamespace(messages=Messages(beta=True))
+            self.models = types.SimpleNamespace(list=lambda: [types.SimpleNamespace(id=m) for m in models])
+
+    mod.Anthropic = Anthropic
+    mod.client_kwargs = {}
+    return mod

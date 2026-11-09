@@ -14,12 +14,22 @@ keep_audio = false
 cookies_from_browser = ""    # safari | chrome | firefox — если YouTube просит войти
 
 [llm]
-backend = "ollama"           # ollama | openai (LM Studio: base_url = "http://localhost:1234/v1")
+# backend: ollama | openai (любой OpenAI-совместимый API) | anthropic (Claude)
+#   Ollama:     backend = "ollama",    base_url = "http://localhost:11434"
+#   LM Studio:  backend = "openai",    base_url = "http://localhost:1234/v1"
+#   Claude:     backend = "anthropic", base_url = "https://api.anthropic.com",  model = "claude-opus-5-5"
+#   ChatGPT:    backend = "openai",    base_url = "https://api.openai.com/v1",  model = "gpt-5-mini"
+#   Gemini:     backend = "openai",    base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+#   OpenRouter: backend = "openai",    base_url = "https://openrouter.ai/api/v1"
+# Ключи API сюда не пишите: вставьте их в «Настройки → Модель» или задайте переменными окружения
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY, MISTRAL_API_KEY.
+backend = "ollama"
 model = "qwen3:8b"
 base_url = "http://localhost:11434"
-num_ctx = 16384
-temperature = 0.3
+num_ctx = 16384              # только Ollama
+temperature = 0.3            # Claude не использует
 chunk_chars = 18000
+effort = "medium"            # только Claude: low | medium | high
 
 [whisper]
 engine = "auto"              # auto | mlx | faster

@@ -27,13 +27,15 @@ DEFAULTS: dict[str, Any] = {
     "keep_audio": False,
     "cookies_from_browser": "",  # safari | chrome | firefox — при «Sign in to confirm you're not a bot»
     "llm": {
-        "backend": "ollama",     # ollama | openai (LM Studio, llama.cpp server)
+        "backend": "ollama",     # ollama | openai (LM Studio, ChatGPT, Gemini, OpenRouter…) | anthropic (Claude)
         "model": "qwen3:8b",
         "base_url": "http://localhost:11434",
         "num_ctx": 16384,
         "temperature": 0.3,
         "chunk_chars": 18000,
         "timeout": 1800,
+        "effort": "medium",      # только Claude: low | medium | high
+        "api_keys": {},          # ключи облачных API по провайдеру; лучше задавать в «Настройках» или env
     },
     "whisper": {
         "engine": "auto",        # auto | mlx | faster

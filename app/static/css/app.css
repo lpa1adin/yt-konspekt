@@ -78,7 +78,7 @@ legend { font-weight: 650; padding: 0 .35rem; }
 .section-head h1, .section-head h2 { margin: 0; }
 label { display: flex; flex-direction: column; gap: .3rem; font-size: .9rem; color: var(--muted); }
 label.check { flex-direction: row; align-items: center; gap: .5rem; color: var(--text); }
-input[type="text"], input[type="search"], input[type="number"], select, textarea {
+input[type="text"], input[type="search"], input[type="number"], input[type="password"], select, textarea {
   font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-s); padding: .55rem .7rem; width: 100%; min-width: 0; }
 textarea { resize: vertical; line-height: 1.5; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -241,3 +241,5 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 .
   h1 { font-size: 1.45rem; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+
+[hidden] { display: none !important; }

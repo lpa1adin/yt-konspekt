@@ -30,7 +30,7 @@ from .pipeline.export import (
     pick_folder_dialog,
     reveal_path,
 )
-from .pipeline.llm import LLMClient
+from .pipeline.llm import PROVIDERS, LLMClient, mask_key, provider_for, resolve_api_key
 from .pipeline.source import video_id
 from .pipeline.summarize import PROMPT_NAMES, PROMPT_TITLES, default_prompt, extract_brief, linkify_timecodes
 from .pipeline.transcript import build_blocks, fmt_ts
@@ -60,7 +60,7 @@ SETTINGS_FIELDS: dict[str, tuple[str, type]] = {
     "filename_template": ("filename_template", str), "keep_markdown": ("keep_markdown", bool),
     "docx_template": ("docx_template", str), "language": ("language", str), "detail": ("detail", str),
     "keep_audio": ("keep_audio", bool), "cookies_from_browser": ("cookies_from_browser", str),
-    "llm_backend": ("llm.backend", str), "llm_base_url": ("llm.base_url", str), "llm_model": ("llm.model", str),
+    "llm_base_url": ("llm.base_url", str), "llm_model": ("llm.model", str), "llm_effort": ("llm.effort", str),
     "llm_num_ctx": ("llm.num_ctx", int), "llm_chunk_chars": ("llm.chunk_chars", int),
     "llm_temperature": ("llm.temperature", float),
     "whisper_engine": ("whisper.engine", str), "whisper_model": ("whisper.model", str),
@@ -228,13 +228,26 @@ def create_app(base_dir: Path | None = None, deps: Deps | None = None, start_wor
         prompts = [{"name": n, "title": PROMPT_TITLES[n], "text": overrides.get(f"prompt.{n}") or default_prompt(n),
                     "custom": bool(overrides.get(f"prompt.{n}"))} for n in PROMPT_NAMES]
         models = await asyncio.to_thread(model_list, cfg)
+        provider = provider_for(cfg["llm"]["backend"], cfg["llm"].get("base_url", ""))
+        saved_key = (cfg["llm"].get("api_keys") or {}).get(provider, "")
+        key = resolve_api_key(cfg["llm"], provider)
+        env = PROVIDERS[provider].get("env")
+        key_state = (f"сохранён ({mask_key(saved_key)})" if saved_key
+                     else f"берётся из переменной {env}" if key else "")
+        public = {pid: {k: p.get(k) for k in ("title", "backend", "base_url", "model", "keys_url", "local")}
+                  for pid, p in PROVIDERS.items()}
         return page(request, "settings.html", {"prompts": prompts, "models": models, "saved": saved,
-                                               "data_dir": str(state.data_dir)})
+                                               "data_dir": str(state.data_dir), "providers": PROVIDERS,
+                                               "providers_json": json.dumps(public, ensure_ascii=False),
+                                               "provider": provider, "key_state": key_state,
+                                               "key_saved": bool(saved_key)})
 
     @app.post("/settings")
     async def settings_save(request: Request):
         body = await read_body(request)
         errors = []
+        prev_cfg = state.config()
+        prev_provider = provider_for(prev_cfg["llm"]["backend"], prev_cfg["llm"].get("base_url", ""))
         for field, (key, typ) in SETTINGS_FIELDS.items():
             if typ is bool:
                 state.db.set_setting(key, truthy(body.get(field, False)))
@@ -248,6 +261,30 @@ def create_app(base_dir: Path | None = None, deps: Deps | None = None, start_wor
                 errors.append(f"{field}: неверное значение")
                 continue
             state.db.set_setting(key, val)
+        provider = str(body.get("llm_provider", "")).strip()
+        if provider in PROVIDERS:
+            preset = PROVIDERS[provider]
+            state.db.set_setting("llm.backend", preset["backend"])
+            posted_url = str(body.get("llm_base_url", "")).strip()
+            local_url = provider_for("openai", posted_url) == "lmstudio"
+            # адрес не от этого провайдера (например, остался от Ollama) — берём адрес из пресета
+            foreign = (not posted_url or (provider == "ollama" and not local_url)
+                       or (provider not in ("ollama", "lmstudio", "custom")
+                           and provider_for(preset["backend"], posted_url) != provider)
+                       or (provider == "anthropic" and local_url))
+            if preset["base_url"] and foreign:
+                state.db.set_setting("llm.base_url", preset["base_url"])
+            if provider != prev_provider:  # сменили провайдера: модель — из пресета, если её не меняли
+                if preset["model"] and str(body.get("llm_model", "")).strip() in ("", prev_cfg["llm"]["model"]):
+                    state.db.set_setting("llm.model", preset["model"])
+            # ключ привязан к провайдеру, определённому по сохранённому адресу
+            cfg_now = state.config()
+            pid = provider_for(cfg_now["llm"]["backend"], cfg_now["llm"].get("base_url", ""))
+            new_key = str(body.get("llm_api_key", "")).strip()
+            if new_key:
+                state.db.set_setting(f"llm.api_keys.{pid}", new_key)
+            elif truthy(body.get("llm_api_key_delete", False)):
+                state.db.set_setting(f"llm.api_keys.{pid}", None)
         langs = str(body.get("subtitles_langs", "")).strip()
         if langs:
             state.db.set_setting("subtitles.langs", [x.strip() for x in langs.split(",") if x.strip()])

@@ -1,7 +1,7 @@
 [project]
 name = "yt-konspekt"
 version = "0.1.0"
-description = "Локальное веб-приложение: ссылка на YouTube → конспект (Whisper + Ollama)"
+description = "Веб-приложение: ссылка на YouTube → конспект (Whisper + Ollama или облачная LLM)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -12,7 +12,8 @@ dependencies = [
     "python-multipart>=0.0.9",
     "markdown-it-py>=3.0",
     "platformdirs>=4.0",
-    "yt-dlp>=2024.10.0",
+    "yt-dlp[default]>=2025.11.12",  # [default] = yt-dlp-ejs для YouTube
+    "anthropic>=1,<2",  # Claude API; для локальных моделей не используется
     "python-docx>=1.1",
     "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "faster-whisper>=1.0; sys_platform != 'darwin' or platform_machine != 'arm64'",

@@ -275,4 +275,36 @@
     const name = e.target.name.value.trim();
     startPull(name, e.target);
   });
+
+  // ───────── выбор провайдера модели («Настройки») ─────────
+  const provSel = $("#llm_provider");
+  if (provSel) {
+    let providers = {};
+    try { providers = JSON.parse(provSel.dataset.providers || "{}"); } catch (e) { /* нет данных */ }
+    const initial = provSel.value;
+    const applyVisibility = () => {
+      const p = providers[provSel.value] || {};
+      $$("[data-cloud-only]").forEach((el) => { el.hidden = !!p.local; });
+      $$("[data-backend-only]").forEach((el) => { el.hidden = el.dataset.backendOnly !== p.backend; });
+      $$("[data-backend-not]").forEach((el) => { el.hidden = el.dataset.backendNot === p.backend; });
+      const link = $("#llm_keys_link");
+      if (link) { link.hidden = !p.keys_url; if (p.keys_url) link.href = p.keys_url; }
+      if (provSel.value !== initial) {
+        const hint = $("#llm_key_hint");
+        if (hint) hint.textContent = "Ключ хранится только в базе приложения на этом компьютере.";
+        const key = $("#llm_api_key");
+        if (key) key.placeholder = "вставьте ключ";
+      }
+    };
+    provSel.addEventListener("change", () => {
+      const p = providers[provSel.value] || {};
+      const base = $("#llm_base_url");
+      if (p.base_url) base.value = p.base_url;
+      else if (provSel.value === "custom") base.value = "";
+      $("#llm_model").value = p.model || "";
+      $("#model-list").innerHTML = "";
+      applyVisibility();
+    });
+    applyVisibility();
+  }
 })();

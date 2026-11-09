@@ -13,7 +13,7 @@ from app.pipeline.export import (
     safe_filename,
     unique_path,
 )
-from app.pipeline.llm import LLMClient, clean_llm_output
+from app.pipeline.llm import LLMClient, clean_llm_output, provider_for, resolve_api_key
 from app.pipeline.source import (
     YouTubeSource,
     friendly_error,
@@ -24,17 +24,24 @@ from app.pipeline.source import (
 )
 from app.pipeline.summarize import (
     SummaryCache,
-    insert_section,
-    repair_timecodes,
     build_document,
     extract_brief,
+    insert_section,
     linkify_timecodes,
     load_prompts,
     render,
+    repair_timecodes,
     summarize,
 )
 from app.pipeline.transcript import build_transcript, fmt_ts, split_chunks, ts_to_seconds
-from tests.fakes import FIXTURES, FakeLLMServer, FakeYDLFactory, long_segments, make_info
+from tests.fakes import (
+    FIXTURES,
+    FakeLLMServer,
+    FakeYDLFactory,
+    long_segments,
+    make_fake_anthropic,
+    make_info,
+)
 
 # ───────────── источник ─────────────
 
@@ -103,7 +110,44 @@ def test_network_retries_then_ok():
     assert f.count("info") == 3
 
 
+BRAVE_ERR = ('\x1b[0;31mERROR:\x1b[0m could not find brave cookies database in '
+             '"/Users/x/Library/Application Support/BraveSoftware/Brave-Browser"')
+
+
+def test_missing_browser_cookies_fall_back_to_no_cookies():
+    f = FakeYDLFactory().add(make_info("abcdefghijk"))
+    f.info_errors = [OSError(BRAVE_ERR)]
+    src = YouTubeSource("brave", ydl_factory=f, retry_pause=0)
+    assert src.extract_info("https://www.youtube.com/watch?v=abcdefghijk")["title"]
+    assert src.cookies == "" and src.cookies_failed == "brave"
+    assert "cookiesfrombrowser" not in src._opts()
+
+
+def test_cookie_failure_then_bot_check_explains_cookies():
+    f = FakeYDLFactory().add(make_info("abcdefghijk"))
+    f.info_errors = [OSError(BRAVE_ERR), OSError("Sign in to confirm you're not a bot")]
+    src = YouTubeSource("brave", ydl_factory=f, retry_pause=0)
+    with pytest.raises(PipelineError) as e:
+        src.extract_info("https://www.youtube.com/watch?v=abcdefghijk")
+    assert "не бот" in e.value.message and "Полный доступ к диску" in e.value.hint
+
+
+def test_info_does_not_require_formats():
+    f = FakeYDLFactory().add(make_info("abcdefghijk"))
+    seen = []
+    orig = f.__call__
+    f_call = lambda opts: (seen.append(opts), orig(opts))[1]  # noqa: E731
+    src = YouTubeSource(ydl_factory=f_call, retry_pause=0)
+    src.extract_info("https://www.youtube.com/watch?v=abcdefghijk")
+    assert seen[0]["ignore_no_formats_error"] is True and seen[0]["js_runtimes"]
+
+
 def test_friendly_errors():
+    err = friendly_error(Exception("ERROR: [youtube] x: Requested format is not available. Use --list-formats"))
+    assert "звуковую дорожку" in err.message and "yt-dlp[default]" in err.hint
+    err = friendly_error(Exception(BRAVE_ERR), "brave")
+    assert err.message == "Не удалось прочитать cookies Brave." and "\x1b" not in err.message
+    assert "Полный доступ к диску" in err.hint
     assert "не бот" in friendly_error(Exception("Sign in to confirm you're not a bot")).message
     assert "cookies" in friendly_error(Exception("HTTP Error 429: Too Many Requests")).hint.lower()
     assert "возрастным" in friendly_error(Exception("Sign in to confirm your age")).message
@@ -153,6 +197,68 @@ def test_llm_length_and_openai_backend():
         assert LLMClient("ollama", "qwen3:8b", s.url).chat("s", "u").truncated
         res = LLMClient("openai", "qwen3:8b", s.url + "/v1").chat("s", "u [01:00]")
         assert "## Кратко" in res.text
+
+
+def test_providers_and_keys(monkeypatch):
+    assert provider_for("anthropic", "https://api.anthropic.com") == "anthropic"
+    assert provider_for("openai", "https://api.openai.com/v1") == "openai"
+    assert provider_for("openai", "https://generativelanguage.googleapis.com/v1beta/openai") == "gemini"
+    assert provider_for("openai", "http://localhost:1234/v1") == "lmstudio"
+    assert provider_for("openai", "https://llm.example.com/v1") == "custom"
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    assert resolve_api_key({}, "openai") == "sk-env"
+    assert resolve_api_key({"api_keys": {"openai": "sk-saved"}}, "openai") == "sk-saved"
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-env")
+    assert resolve_api_key({}, "gemini") == "g-env"
+
+
+def test_cloud_openai_compatible_key_and_temperature():
+    with FakeLLMServer(models=["gpt-test"]) as s:
+        s.require_key, s.reject_temperature = "sk-good", True
+        with pytest.raises(PipelineError, match="Не указан API-ключ"):
+            LLMClient("openai", "gpt-test", s.url + "/v1", provider="openai").chat("s", "u")
+        with pytest.raises(PipelineError, match="ключ не подошёл"):
+            LLMClient("openai", "gpt-test", s.url + "/v1", api_key="sk-bad", provider="openai").check()
+        llm = LLMClient("openai", "gpt-test", s.url + "/v1", api_key="sk-good", provider="openai")
+        llm.check()
+        res = llm.chat("s", "u [01:00]")
+        assert "## Кратко" in res.text and "temperature" not in s.requests[-1]
+        assert s.auth_headers[-1] == "Bearer sk-good"
+        s.fail_on = {s.chat_count + 1}
+        with pytest.raises(LLMUnavailable, match="сервер занят"):  # 5xx → задача подождёт
+            llm.chat("s", "u")
+
+
+def test_claude_backend(monkeypatch):
+    fake = make_fake_anthropic(text="## Кратко\nПро Java [1:05:30].")
+    monkeypatch.setitem(__import__("sys").modules, "anthropic", fake)
+    with pytest.raises(PipelineError, match="Не указан API-ключ"):
+        LLMClient("anthropic", "claude-opus-5-5", "https://api.anthropic.com").chat("s", "u")
+    llm = LLMClient("anthropic", "claude-opus-5-5", "https://api.anthropic.com", api_key="sk-ant", effort="low")
+    seen = []
+    res = llm.chat("Система", "Расшифровка", on_text=seen.append)
+    assert res.text == "## Кратко\nПро Java [1:05:30]." and not res.truncated and len(seen) > 1
+    call = fake.calls[-1]
+    assert call["system"] == "Система" and call["messages"] == [{"role": "user", "content": "Расшифровка"}]
+    assert call["output_config"] == {"effort": "low"} and "temperature" not in call
+    assert call["beta"] and call["fallbacks"] == "default"
+    assert "base_url" not in fake.client_kwargs and fake.client_kwargs["api_key"] == "sk-ant"
+    assert llm.list_models() == ["claude-opus-5-5", "claude-sonnet-5-5"]
+    llm.check()
+
+    old = LLMClient("anthropic", "claude-haiku-4-5", "https://api.anthropic.com", api_key="sk-ant")
+    old.chat("s", "u")
+    assert "output_config" not in fake.calls[-1] and not fake.calls[-1]["beta"]
+
+    with pytest.raises(PipelineError, match="ключ не подошёл"):
+        LLMClient("anthropic", "claude-opus-5-5", "https://api.anthropic.com", api_key="bad").chat("s", "u")
+
+    monkeypatch.setitem(__import__("sys").modules, "anthropic", make_fake_anthropic(stop_reason="max_tokens"))
+    assert llm.chat("s", "u").truncated
+    monkeypatch.setitem(__import__("sys").modules, "anthropic", make_fake_anthropic(stop_reason="refusal"))
+    with pytest.raises(PipelineError, match="отказался"):
+        llm.chat("s", "u")
 
 
 def test_llm_unavailable_and_missing_model():

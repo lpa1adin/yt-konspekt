@@ -147,6 +147,30 @@ def test_settings_save(client):
     assert "prompt.system" not in client.db.get_settings()
 
 
+def test_settings_cloud_provider_and_key(client, monkeypatch):
+    import sys
+
+    from tests.fakes import make_fake_anthropic
+    monkeypatch.setitem(sys.modules, "anthropic", make_fake_anthropic())
+    r = client.post("/settings", data={"llm_provider": "anthropic", "llm_api_key": "sk-ant-secret-1234",
+                                       "llm_base_url": "http://localhost:11434", "llm_model": "qwen3:8b",
+                                       "llm_effort": "low"}, follow_redirects=False)
+    assert r.status_code == 303
+    s = client.db.get_settings()
+    assert s["llm.backend"] == "anthropic" and s["llm.base_url"] == "https://api.anthropic.com"
+    assert s["llm.model"] == "claude-opus-5-5" and s["llm.effort"] == "low"
+    assert s["llm.api_keys.anthropic"] == "sk-ant-secret-1234"
+    if templates is not None:
+        page = client.get("/settings").text
+        assert "sk-ant-secret-1234" not in page and "…1234" in page
+        assert "claude-sonnet-5-5" in page  # список моделей от провайдера
+    # пустое поле ключа не стирает сохранённый; галочка — удаляет
+    client.post("/settings", data={"llm_provider": "anthropic", "llm_api_key": ""}, follow_redirects=False)
+    assert client.db.get_settings()["llm.api_keys.anthropic"] == "sk-ant-secret-1234"
+    client.post("/settings", data={"llm_provider": "anthropic", "llm_api_key_delete": "1"}, follow_redirects=False)
+    assert "llm.api_keys.anthropic" not in client.db.get_settings()
+
+
 @pytest.mark.skipif(templates is None, reason="Jinja2 не установлен")
 def test_html_pages(client):
     r = client.post("/api/jobs", json={"urls": ["abcdefghijk"], "format": ""})

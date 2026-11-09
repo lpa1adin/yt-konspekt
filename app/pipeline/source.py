@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -132,14 +133,39 @@ _NETWORK_MARKERS = ("timed out", "timeout", "connection reset", "network is unre
                     "remote end closed", "nodename nor servname")
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_COOKIE_MARKERS = ("cookies database", "cookie database", "failed to decrypt", "safe storage",
+                   "keyring", "unsupported browser", "could not copy chrome cookie database")
+
+BROWSER_NAMES = {"safari": "Safari", "chrome": "Chrome", "firefox": "Firefox", "edge": "Edge",
+                 "brave": "Brave", "chromium": "Chromium", "opera": "Opera", "vivaldi": "Vivaldi"}
+
+
 def _is_network_error(text: str) -> bool:
     low = text.lower()
     return any(m in low for m in _NETWORK_MARKERS)
 
 
-def friendly_error(exc: Exception) -> PipelineError:
-    text = str(exc)
+def is_cookie_error(text: str) -> bool:
     low = text.lower()
+    return any(m in low for m in _COOKIE_MARKERS) or ("cookies" in low and "operation not permitted" in low)
+
+
+def cookie_hint(browser: str = "") -> str:
+    name = BROWSER_NAMES.get(browser, browser or "браузера")
+    return (f"macOS закрывает другим программам доступ к данным {name}. Откройте «Системные настройки → "
+            "Конфиденциальность и безопасность → Полный доступ к диску», включите Терминал (или программу, "
+            f"из которой запускаете приложение) и перезапустите его. Для Chrome, Edge и Brave разрешите и "
+            f"запрос связки ключей «{name} Safe Storage». Или выберите в «Настройках» другой браузер — "
+            "тот, где вы вошли в YouTube.")
+
+
+def friendly_error(exc: Exception, browser: str = "") -> PipelineError:
+    text = _ANSI.sub("", str(exc)).strip()
+    low = text.lower()
+    if is_cookie_error(text):
+        name = BROWSER_NAMES.get(browser, browser)
+        return PipelineError(f"Не удалось прочитать cookies{' ' + name if name else ''}.", cookie_hint(browser))
     if any(m in low for m in ("private video", "confirm your age", "age-restricted", "members-only")):
         return PipelineError(
             "Видео недоступно: оно закрытое или с возрастным ограничением.",
@@ -149,6 +175,8 @@ def friendly_error(exc: Exception) -> PipelineError:
             "YouTube просит подтвердить, что вы не бот.",
             "Обновите yt-dlp (uv pip install -U yt-dlp) и укажите в настройках «Cookies из браузера» "
             "(Safari / Chrome / Firefox), где вы вошли в YouTube.")
+    if "requested format is not available" in low or "no video formats found" in low:
+        return PipelineError("YouTube не отдал звуковую дорожку этого видео.", JS_HINT)
     if "video unavailable" in low or "has been removed" in low or "is not available" in low:
         return PipelineError("Видео недоступно (удалено или ограничено в вашей стране).")
     if "live event will begin" in low or "is live" in low or "premieres in" in low:
@@ -187,6 +215,26 @@ def _default_factory(opts: dict):
     return yt_dlp.YoutubeDL(opts)
 
 
+JS_RUNTIMES = ("deno", "node", "bun")
+JS_HINT = ("yt-dlp нужен JavaScript-движок и пакет yt-dlp-ejs. В папке приложения выполните "
+           "uv pip install -U \"yt-dlp[default]\". Если нет ни Node.js, ни Deno — brew install deno "
+           "(Windows: winget install DenoLand.Deno). Затем перезапустите приложение.")
+
+
+def js_runtimes() -> dict[str, dict]:
+    """Найденные JS-движки: yt-dlp решает ими задачи YouTube, без них часть форматов (и звук) недоступна."""
+    found = {name: {"path": path} for name in JS_RUNTIMES if (path := shutil.which(name))}
+    return found or {"deno": {}}
+
+
+def has_ejs() -> bool:
+    try:
+        import yt_dlp_ejs  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def yt_dlp_version() -> str | None:
     try:
         import yt_dlp.version
@@ -199,11 +247,12 @@ class YouTubeSource:
     def __init__(self, cookies_from_browser: str = "", ydl_factory: YdlFactory | None = None,
                  retry_pause: float = 3.0):
         self.cookies = (cookies_from_browser or "").strip().lower()
+        self.cookies_failed = ""  # браузер, cookies которого прочитать не удалось
         self.factory = ydl_factory or _default_factory
         self.retry_pause = retry_pause
 
     def _opts(self, **extra) -> dict:
-        opts = {"quiet": True, "no_warnings": True, "noprogress": True}
+        opts = {"quiet": True, "no_warnings": True, "noprogress": True, "js_runtimes": js_runtimes()}
         if self.cookies:
             opts["cookiesfrombrowser"] = (self.cookies,)
         opts.update(extra)
@@ -211,10 +260,25 @@ class YouTubeSource:
 
     def extract_info(self, url: str, cancel: CancelFn | None = None) -> dict:
         def run():
-            with self.factory(self._opts(skip_download=True)) as ydl:
+            # Для метаданных и субтитров форматы не нужны: без этой опции yt-dlp падает
+            # с «Requested format is not available», даже если субтитры есть.
+            with self.factory(self._opts(skip_download=True, ignore_no_formats_error=True)) as ydl:
                 return ydl.extract_info(url, download=False)
 
-        info = _with_retries(run, pause=self.retry_pause, cancel=cancel)
+        try:
+            info = _with_retries(run, pause=self.retry_pause, cancel=cancel)
+        except PipelineError as e:
+            if not (self.cookies and is_cookie_error(str(e.__cause__ or ""))):
+                raise
+            # Cookies нужны лишь иногда (закрытые видео, проверка «не бот») — пробуем без них.
+            log.warning("Cookies из %s недоступны (%s) — продолжаю без них", self.cookies, e.__cause__)
+            self.cookies_failed, self.cookies = self.cookies, ""
+            try:
+                info = _with_retries(run, pause=self.retry_pause, cancel=cancel)
+            except PipelineError as e2:
+                if e2.hint and "cookies" in e2.hint.lower():
+                    raise PipelineError(e2.message, cookie_hint(self.cookies_failed)) from e2
+                raise
         if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
             raise PipelineError("Сейчас идёт прямой эфир.", "Дождитесь окончания эфира и добавьте ссылку снова.")
         return info

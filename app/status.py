@@ -6,10 +6,10 @@ import shutil
 import sys
 from pathlib import Path
 
-from .pipeline import LLMUnavailable
+from .pipeline import LLMUnavailable, PipelineError
 from .pipeline.export import find_pages_app
 from .pipeline.llm import LLMClient
-from .pipeline.source import yt_dlp_version
+from .pipeline.source import JS_HINT, has_ejs, js_runtimes, yt_dlp_version
 from .pipeline.transcribe import has_module, is_apple_silicon, resolve_engine
 
 
@@ -21,22 +21,30 @@ def gather(cfg: dict, data_dir: Path) -> dict:
     checks: list[dict] = []
     llm = LLMClient.from_config(cfg)
     models: list[str] = []
-    backend_name = "Ollama" if llm.backend == "ollama" else "Сервер модели (OpenAI API)"
+    backend_name = llm.title
     try:
         models = llm.list_models()
-        checks.append(_check("llm_server", backend_name, True, f"{llm.base} отвечает"))
+        checks.append(_check("llm_server", backend_name, True,
+                             f"{llm.base} отвечает" if llm.is_local else "ключ API принят"))
         has = llm.has_model(models)
+        if llm.backend == "ollama":
+            hint = f"Нажмите «Скачать модель» или выполните: ollama pull {llm.model}"
+        elif llm.is_local:
+            hint = "Загрузите модель в LM Studio."
+        else:
+            hint = "Выберите модель из списка в «Настройки → Модель»."
         checks.append(_check(
             "llm_model", f"Модель {llm.model}", has,
-            "скачана" if has else "не найдена",
-            "" if has else (f"Нажмите «Скачать модель» или выполните: ollama pull {llm.model}"
-                            if llm.backend == "ollama" else "Загрузите модель в LM Studio."),
-            action="pull" if (not has and llm.backend == "ollama") else ""))
+            ("скачана" if llm.is_local else "доступна") if has else "не найдена",
+            "" if has else hint, action="pull" if (not has and llm.backend == "ollama") else ""))
     except LLMUnavailable as e:
         checks.append(_check("llm_server", backend_name, False, e.message,
                              "Установите Ollama с ollama.com и запустите приложение Ollama."
                              if llm.backend == "ollama" else e.hint))
         checks.append(_check("llm_model", f"Модель {llm.model}", None, "нельзя проверить без сервера"))
+    except PipelineError as e:  # нет ключа, ключ не подошёл, не установлен пакет anthropic
+        checks.append(_check("llm_server", backend_name, False, e.message, e.hint))
+        checks.append(_check("llm_model", f"Модель {llm.model}", None, "нельзя проверить без ключа"))
 
     engine, hint = resolve_engine(cfg["whisper"].get("engine", "auto"))
     names = {"mlx": "mlx-whisper (Apple Silicon)", "faster": "faster-whisper", "none": "не установлен"}
@@ -65,6 +73,12 @@ def gather(cfg: dict, data_dir: Path) -> dict:
     checks.append(_check("yt_dlp", "yt-dlp", bool(ver), ver or "не установлен",
                          "Держите свежим: uv pip install -U yt-dlp" if ver else "uv pip install yt-dlp"))
 
+    rts = [n for n, c in js_runtimes().items() if c.get("path")]
+    ejs = has_ejs()
+    checks.append(_check("js_runtime", "JavaScript для YouTube (deno / node)", bool(rts and ejs),
+                         ", ".join(rts) + ("" if ejs else ", нет пакета yt-dlp-ejs") if rts else "не найден",
+                         "" if rts and ejs else JS_HINT))
+
     out = Path(cfg.get("output_dir") or "~").expanduser()
     probe = out if out.exists() else Path.home()
     try:
@@ -74,4 +88,5 @@ def gather(cfg: dict, data_dir: Path) -> dict:
     except OSError:
         pass
     return {"checks": checks, "models": models, "model": llm.model, "backend": llm.backend,
+            "local": llm.is_local,
             "data_dir": str(data_dir), "ok": all(c["ok"] is not False for c in checks)}
