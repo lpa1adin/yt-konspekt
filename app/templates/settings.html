@@ -54,26 +54,29 @@
           <optgroup label="На этом компьютере — бесплатно, данные никуда не уходят">
             {% for pid, p in providers.items() if p.local %}<option value="{{ pid }}" {% if provider == pid %}selected{% endif %}>{{ p.title }}</option>{% endfor %}
           </optgroup>
-          <optgroup label="Облачные API — нужен ключ, платно, расшифровка уходит провайдеру">
-            {% for pid, p in providers.items() if not p.local %}<option value="{{ pid }}" {% if provider == pid %}selected{% endif %}>{{ p.title }}</option>{% endfor %}
+          <optgroup label="Ваша подписка через официальный агент (CLI) — без ключа API">
+            {% for pid, p in providers.items() if p.subscription %}<option value="{{ pid }}" {% if provider == pid %}selected{% endif %}>{{ p.title }}</option>{% endfor %}
+          </optgroup>
+          <optgroup label="Облачные API — нужен ключ, оплата по объёму текста">
+            {% for pid, p in providers.items() if not p.local and not p.subscription %}<option value="{{ pid }}" {% if provider == pid %}selected{% endif %}>{{ p.title }}</option>{% endfor %}
           </optgroup>
         </select>
       </label>
-      <label data-cloud-only>API-ключ
+      <label data-key-only>API-ключ
         <input type="password" name="llm_api_key" id="llm_api_key" value="" autocomplete="off" spellcheck="false"
                placeholder="{% if key_state %}{{ key_state }} — оставьте пустым, чтобы не менять{% else %}вставьте ключ{% endif %}">
         <small class="muted"><span id="llm_key_hint">{% if key_state %}Ключ для этого провайдера: {{ key_state }}.{% else %}Ключ хранится только в базе приложения на этом компьютере.{% endif %}</span>
           <a id="llm_keys_link" href="{{ providers[provider].keys_url or '#' }}" target="_blank" rel="noopener" {% if not providers[provider].keys_url %}hidden{% endif %}>Где взять ключ</a></small>
       </label>
-      {% if key_saved %}<label class="check" data-cloud-only><input type="checkbox" name="llm_api_key_delete" value="1"> Удалить сохранённый ключ этого провайдера</label>{% endif %}
-      <label>Адрес
+      {% if key_saved %}<label class="check" data-key-only><input type="checkbox" name="llm_api_key_delete" value="1"> Удалить сохранённый ключ этого провайдера</label>{% endif %}
+      <label><span id="llm_base_label">{% if providers[provider].backend == 'cli' %}Программа агента{% else %}Адрес{% endif %}</span>
         <input type="text" name="llm_base_url" id="llm_base_url" value="{{ cfg.llm.base_url }}" placeholder="http://localhost:11434">
-        <small class="muted">Подставляется сам при выборе провайдера.</small>
+        <small class="muted" id="llm_base_hint">{% if providers[provider].backend == 'cli' %}Команда или полный путь к программе — подставляется сам.{% else %}Подставляется сам при выборе провайдера.{% endif %}</small>
       </label>
       <label>Модель по умолчанию
-        <input type="text" name="llm_model" id="llm_model" value="{{ cfg.llm.model }}" list="model-list">
+        <input type="text" name="llm_model" id="llm_model" value="{{ cfg.llm.model }}" list="model-list" placeholder="пусто — модель по умолчанию">
         <datalist id="model-list">{% for m in models %}<option value="{{ m }}">{% endfor %}</datalist>
-        <small class="muted">Список моделей появится после сохранения (для облака — после ввода ключа).</small>
+        <small class="muted">Подсказки — в выпадающем списке; для облака список появится после ввода ключа.</small>
       </label>
       <label data-backend-only="ollama">Контекст, токенов (num_ctx)
         <input type="number" name="llm_num_ctx" value="{{ cfg.llm.num_ctx }}" min="2048" step="1024">
@@ -82,7 +85,7 @@
         <input type="number" name="llm_chunk_chars" value="{{ cfg.llm.chunk_chars }}" min="2000" step="1000">
         <small class="muted">Ответ обрезается — уменьшите. 18 000 ≈ 20–25 минут речи.</small>
       </label>
-      <label data-backend-not="anthropic">Температура
+      <label data-backend-not="anthropic cli">Температура
         <input type="number" name="llm_temperature" value="{{ cfg.llm.temperature }}" min="0" max="2" step="0.1">
       </label>
       <label data-backend-only="anthropic">Глубина рассуждений Claude (effort)
@@ -93,7 +96,15 @@
         </select>
       </label>
     </div>
-    <p class="muted small" data-cloud-only>Облачная модель получает текст расшифровки и промпты. Оплата — по тарифу провайдера:
+    <div class="muted small" data-backend-only="cli">
+      <p>Агент работает по вашей подписке: приложение запускает установленную у вас программу и не видит токенов входа.
+        Один раз установите её и войдите в аккаунт в терминале:</p>
+      <p><code id="llm_cli_install">{{ providers_public[provider].install if providers[provider].backend == 'cli' else '' }}</code><br>
+        <code id="llm_cli_login">{{ providers_public[provider].login if providers[provider].backend == 'cli' else '' }}</code></p>
+      <p>Запросы расходуют лимиты подписки. Поле «Модель» можно оставить пустым — тогда агент возьмёт модель из своих настроек.
+        Проверка установки и входа — на экране «Состояние».</p>
+    </div>
+    <p class="muted small" data-key-only>Облачная модель получает текст расшифровки и промпты. Оплата — по тарифу провайдера:
       за длинный курс обычно от нескольких центов до пары долларов, в зависимости от модели.</p>
   </fieldset>
 

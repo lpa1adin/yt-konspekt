@@ -7,6 +7,7 @@ OpenRouter, DeepSeek, Mistral…) и Claude через официальный SD
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from . import CancelFn, Cancelled, LLMUnavailable, PipelineError
+from .agent_cli import AGENTS, AgentRun, agent_for_command, find_executable, login_status
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +44,8 @@ def clean_llm_output(text: str) -> str:
     return text.strip()
 
 
-# Провайдеры для выбора в «Настройках». backend — протокол: ollama | openai (OpenAI-совместимый) | anthropic.
+# Провайдеры для выбора в «Настройках». backend — протокол: ollama | openai (OpenAI-совместимый) | anthropic |
+# cli (официальный CLI-агент по подписке; в base_url — команда или путь к программе).
 PROVIDERS: dict[str, dict] = {
     "ollama": {"title": "Ollama (локально)", "backend": "ollama", "base_url": "http://localhost:11434",
                "model": "qwen3:8b", "local": True},
@@ -68,6 +71,8 @@ PROVIDERS: dict[str, dict] = {
                 "model": "mistral-large-latest", "env": "MISTRAL_API_KEY",
                 "keys_url": "https://console.mistral.ai/api-keys"},
     "custom": {"title": "Другой OpenAI-совместимый API", "backend": "openai", "base_url": "", "model": ""},
+    **{aid: {"title": a["title"], "backend": "cli", "base_url": a["command"], "model": "", "subscription": True,
+             "keys_url": None} for aid, a in AGENTS.items()},
 }
 
 # Модели Claude, у которых есть уровень effort и серверный запасной вариант при отказе (fallbacks).
@@ -83,11 +88,24 @@ def provider_for(backend: str, base_url: str) -> str:
     """Какой провайдер из PROVIDERS соответствует настройкам (для ключа API и подписей)."""
     if backend in ("ollama", "anthropic"):
         return backend
+    if backend == "cli":
+        return agent_for_command(base_url) or "claude_code"
     host = _host(base_url)
     for pid, p in PROVIDERS.items():
         if p["backend"] == "openai" and p["base_url"] and _host(p["base_url"]) == host:
             return pid
-    return "lmstudio" if host in ("localhost", "127.0.0.1", "::1", "") else "custom"
+    return "lmstudio" if _is_local_host(host) else "custom"
+
+
+def _is_local_host(host: str) -> bool:
+    """Этот компьютер или локальная сеть (192.168.*, 10.*, *.local) — ключ API не нужен."""
+    if host in ("localhost", "") or host.endswith((".local", ".localhost")):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local
 
 
 def resolve_api_key(cfg_llm: dict, provider: str) -> str:
@@ -126,13 +144,14 @@ class LLMClient:
         self._fallbacks_supported = True
         self._resp = None
         self._astream = None
+        self._agent_run: AgentRun | None = None
         self._lock = threading.Lock()
 
     @classmethod
     def from_config(cls, cfg: dict, model: str | None = None) -> LLMClient:
         llm = cfg["llm"]
         backend = llm.get("backend", "ollama")
-        base = llm.get("base_url") or {"ollama": "http://localhost:11434",
+        base = llm.get("base_url") or {"ollama": "http://localhost:11434", "cli": "claude",
                                        "anthropic": "https://api.anthropic.com"}.get(backend,
                                                                                     "http://localhost:1234/v1")
         provider = provider_for(backend, base)
@@ -147,6 +166,14 @@ class LLMClient:
     @property
     def title(self) -> str:
         return PROVIDERS.get(self.provider, PROVIDERS["custom"])["title"]
+
+    @property
+    def display_model(self) -> str:
+        """Подпись модели в шапке конспекта: у агента без явной модели — название агента."""
+        if self.backend == "cli":
+            name = AGENTS[self.provider]["command"]
+            return f"{name} ({self.model})" if self.model else f"{name} (модель по умолчанию)"
+        return self.model
 
     # ───────── служебное ─────────
 
@@ -210,7 +237,9 @@ class LLMClient:
     def abort(self) -> None:
         """Прервать текущий потоковый ответ из другого потока (кнопка «Отменить»)."""
         with self._lock:
-            resp, astream = self._resp, self._astream
+            resp, astream, run = self._resp, self._astream, self._agent_run
+        if run is not None:
+            run.kill()
         if astream is not None:
             try:
                 astream.close()
@@ -230,9 +259,25 @@ class LLMClient:
 
     # ───────── модели ─────────
 
+    def _agent_ready(self) -> str:
+        """Путь к CLI агента; PipelineError, если программы нет или вход не выполнен."""
+        a = AGENTS[self.provider]
+        exe = find_executable(self.base)
+        if not exe:
+            raise PipelineError(f"Не найдена программа {a['command']} ({a['title']}).",
+                                f"Установите: {a['install']}. Затем войдите: «{a['login']}».")
+        ok, detail = login_status(self.provider, exe)
+        if ok is False:
+            raise PipelineError(f"{a['title']}: {detail}.",
+                                f"В терминале выполните «{a['login']}» и войдите в аккаунт с подпиской.")
+        return exe
+
     def list_models(self) -> list[str]:
         if self.backend == "ollama":
             return [m["name"] for m in self._get("/api/tags").get("models", [])]
+        if self.backend == "cli":
+            self._agent_ready()
+            return list(AGENTS[self.provider]["models"])
         if self.backend == "anthropic":
             if not self.api_key:
                 raise self._no_key()
@@ -257,6 +302,8 @@ class LLMClient:
 
     def has_model(self, names: list[str] | None = None) -> bool:
         names = self.list_models() if names is None else names
+        if self.backend == "cli":
+            return True  # модель проверит сам CLI; пустое поле — модель по умолчанию из его настроек
         if self.backend != "ollama":
             return not names or self.model.removeprefix("models/") in names
         wanted = self.model if ":" in self.model else f"{self.model}:latest"
@@ -305,6 +352,8 @@ class LLMClient:
             raw, truncated = self._chat_ollama(messages, on_text, cancel)
         elif self.backend == "anthropic":
             raw, truncated = self._chat_anthropic(system, user, on_text, cancel)
+        elif self.backend == "cli":
+            raw, truncated = self._chat_cli(system, user, on_text, cancel)
         else:
             raw, truncated = self._chat_openai(messages, on_text, cancel)
         if truncated:
@@ -409,6 +458,18 @@ class LLMClient:
                 return self._chat_openai(messages, on_text, cancel)
             raise self._http_error(e, body) from e
         return "".join(acc), state["reason"] == "length"
+
+    # ───────── агент по подписке (Claude Code, Codex, Gemini CLI) ─────────
+
+    def _chat_cli(self, system: str, user: str, on_text, cancel) -> tuple[str, bool]:
+        run = AgentRun(self.provider, self.base, self.model, self.timeout)
+        with self._lock:
+            self._agent_run = run
+        try:
+            return run.run(system, user, on_text, cancel)
+        finally:
+            with self._lock:
+                self._agent_run = None
 
     # ───────── Claude (официальный SDK Anthropic) ─────────
 

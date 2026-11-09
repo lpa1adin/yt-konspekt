@@ -205,6 +205,8 @@ def test_providers_and_keys(monkeypatch):
     assert provider_for("openai", "https://generativelanguage.googleapis.com/v1beta/openai") == "gemini"
     assert provider_for("openai", "http://localhost:1234/v1") == "lmstudio"
     assert provider_for("openai", "https://llm.example.com/v1") == "custom"
+    assert provider_for("openai", "http://192.168.1.20:8000/v1") == "lmstudio"  # сервер в локальной сети
+    assert provider_for("openai", "http://studio.local:1234/v1") == "lmstudio"
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
     assert resolve_api_key({}, "openai") == "sk-env"
     assert resolve_api_key({"api_keys": {"openai": "sk-saved"}}, "openai") == "sk-saved"

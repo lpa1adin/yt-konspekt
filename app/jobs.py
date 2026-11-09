@@ -315,13 +315,13 @@ class Worker:
         cancel = run.cancel.is_set
         llm = LLMClient.from_config(cfg)
         run.llm = llm
-        self._set(jid, stage="summarizing", progress=0, message=f"проверяю {llm.model}…")
+        self._set(jid, stage="summarizing", progress=0, message=f"проверяю {llm.display_model}…")
         llm.check()
         self._llm_dirty = llm
         prompts = self._prompts()
         phash = prompt_hash(prompts)
         chunk_chars = int(cfg["llm"].get("chunk_chars", 18000))
-        key = cache_key(transcript["id"], llm.model, cfg["detail"], cfg["language"], chunk_chars, phash)
+        key = cache_key(transcript["id"], llm.display_model, cfg["detail"], cfg["language"], chunk_chars, phash)
         fresh = self.db.get_job(jid)
         cache = SummaryCache.from_json(fresh.get("partials_json"), key)
 
@@ -334,9 +334,9 @@ class Worker:
                         cancel=cancel)
         source_desc = ("распознавание Whisper (" + transcript["source_detail"] + ")"
                        if transcript["source"] == "whisper" else transcript["source_detail"])
-        md = build_document(linkify_timecodes(res.markdown, video["id"]), video, source_desc, llm.model)
+        md = build_document(linkify_timecodes(res.markdown, video["id"]), video, source_desc, llm.display_model)
         summary = self.db.add_summary(video["id"], transcript["id"], md, detail=cfg["detail"],
-                                      language=cfg["language"], model=llm.model, prompt_hash=phash)
+                                      language=cfg["language"], model=llm.display_model, prompt_hash=phash)
         warn = (" ⚠ Ответ модели обрезан по контексту — уменьшите chunk_chars в настройках и нажмите «Переделать»."
                 if res.truncated else "")
         self._set(jid, summary_id=summary["id"], partials_json=None, message="конспект готов" + warn)

@@ -60,13 +60,13 @@ def process(url: str, cfg: dict, *, ydl_factory=None, transcriber=None, llm: LLM
             raise PipelineError("Не удалось получить текст видео.")
 
     transcript = build_transcript(segs)
-    say(f"Пишу конспект ({llm.model})…")
+    say(f"Пишу конспект ({llm.display_model})…")
     res = summarize(llm, transcript, meta["title"], cfg["language"], cfg["detail"],
                     int(cfg["llm"].get("chunk_chars", 18000)), load_prompts(),
                     on_progress=lambda f, m: say(m) if m.startswith(("часть", "свожу", "собираю")) else None)
     if res.truncated:
         say("Внимание: ответ упёрся в лимит контекста — уменьшите chunk_chars или увеличьте num_ctx.")
-    md = build_document(linkify_timecodes(res.markdown, vid), meta, source_desc, llm.model)
+    md = build_document(linkify_timecodes(res.markdown, vid), meta, source_desc, llm.display_model)
 
     base = file_base(cfg.get("filename_template", "{title}"), meta)
     out = export_markdown(md, cfg["output_dir"], base, cfg["format"] or "md",

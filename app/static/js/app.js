@@ -284,9 +284,18 @@
     const initial = provSel.value;
     const applyVisibility = () => {
       const p = providers[provSel.value] || {};
+      const cli = p.backend === "cli";
       $$("[data-cloud-only]").forEach((el) => { el.hidden = !!p.local; });
+      $$("[data-key-only]").forEach((el) => { el.hidden = !!p.local || cli; });
+      const label = $("#llm_base_label"), bhint = $("#llm_base_hint");
+      if (label) label.textContent = cli ? "Программа агента" : "Адрес";
+      if (bhint) bhint.textContent = cli ? "Команда или полный путь к программе — подставляется сам."
+        : "Подставляется сам при выборе провайдера.";
+      const inst = $("#llm_cli_install"), login = $("#llm_cli_login");
+      if (inst) inst.textContent = cli ? (p.install || "") : "";
+      if (login) login.textContent = cli ? (p.login || "") : "";
       $$("[data-backend-only]").forEach((el) => { el.hidden = el.dataset.backendOnly !== p.backend; });
-      $$("[data-backend-not]").forEach((el) => { el.hidden = el.dataset.backendNot === p.backend; });
+      $$("[data-backend-not]").forEach((el) => { el.hidden = el.dataset.backendNot.split(" ").includes(p.backend); });
       const link = $("#llm_keys_link");
       if (link) { link.hidden = !p.keys_url; if (p.keys_url) link.href = p.keys_url; }
       if (provSel.value !== initial) {
@@ -302,7 +311,9 @@
       if (p.base_url) base.value = p.base_url;
       else if (provSel.value === "custom") base.value = "";
       $("#llm_model").value = p.model || "";
-      $("#model-list").innerHTML = "";
+      const list = $("#model-list");
+      list.innerHTML = "";
+      (p.models || []).forEach((m) => { const o = document.createElement("option"); o.value = m; list.appendChild(o); });
       applyVisibility();
     });
     applyVisibility();

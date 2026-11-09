@@ -171,6 +171,17 @@ def test_settings_cloud_provider_and_key(client, monkeypatch):
     assert "llm.api_keys.anthropic" not in client.db.get_settings()
 
 
+def test_settings_subscription_agent(client):
+    r = client.post("/settings", data={"llm_provider": "codex", "llm_base_url": "https://api.anthropic.com",
+                                       "llm_model": "qwen3:8b"}, follow_redirects=False)
+    assert r.status_code == 303
+    s = client.db.get_settings()
+    assert s["llm.backend"] == "cli" and s["llm.base_url"] == "codex" and s["llm.model"] == ""
+    if templates is not None:
+        page = client.get("/settings").text
+        assert "codex login" in page and "Программа агента" in page
+
+
 @pytest.mark.skipif(templates is None, reason="Jinja2 не установлен")
 def test_html_pages(client):
     r = client.post("/api/jobs", json={"urls": ["abcdefghijk"], "format": ""})

@@ -24,8 +24,9 @@ def gather(cfg: dict, data_dir: Path) -> dict:
     backend_name = llm.title
     try:
         models = llm.list_models()
-        checks.append(_check("llm_server", backend_name, True,
-                             f"{llm.base} отвечает" if llm.is_local else "ключ API принят"))
+        ok_detail = (f"{llm.base} отвечает" if llm.is_local
+                     else "программа найдена, вход выполнен" if llm.backend == "cli" else "ключ API принят")
+        checks.append(_check("llm_server", backend_name, True, ok_detail))
         has = llm.has_model(models)
         if llm.backend == "ollama":
             hint = f"Нажмите «Скачать модель» или выполните: ollama pull {llm.model}"
@@ -34,7 +35,7 @@ def gather(cfg: dict, data_dir: Path) -> dict:
         else:
             hint = "Выберите модель из списка в «Настройки → Модель»."
         checks.append(_check(
-            "llm_model", f"Модель {llm.model}", has,
+            "llm_model", f"Модель {llm.display_model}", has,
             ("скачана" if llm.is_local else "доступна") if has else "не найдена",
             "" if has else hint, action="pull" if (not has and llm.backend == "ollama") else ""))
     except LLMUnavailable as e:
@@ -44,7 +45,8 @@ def gather(cfg: dict, data_dir: Path) -> dict:
         checks.append(_check("llm_model", f"Модель {llm.model}", None, "нельзя проверить без сервера"))
     except PipelineError as e:  # нет ключа, ключ не подошёл, не установлен пакет anthropic
         checks.append(_check("llm_server", backend_name, False, e.message, e.hint))
-        checks.append(_check("llm_model", f"Модель {llm.model}", None, "нельзя проверить без ключа"))
+        checks.append(_check("llm_model", f"Модель {llm.display_model}", None,
+                             "нельзя проверить, пока не исправлен пункт выше"))
 
     engine, hint = resolve_engine(cfg["whisper"].get("engine", "auto"))
     names = {"mlx": "mlx-whisper (Apple Silicon)", "faster": "faster-whisper", "none": "не установлен"}

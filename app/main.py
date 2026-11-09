@@ -23,6 +23,7 @@ from .db import Database
 from .events import EventBus
 from .jobs import STAGE_TITLES, Deps, Worker, event_from_job, export_document, job_view
 from .pipeline import PipelineError
+from .pipeline.agent_cli import AGENTS, agent_for_command
 from .pipeline.export import (
     available_formats,
     check_writable,
@@ -236,9 +237,12 @@ def create_app(base_dir: Path | None = None, deps: Deps | None = None, start_wor
                      else f"берётся из переменной {env}" if key else "")
         public = {pid: {k: p.get(k) for k in ("title", "backend", "base_url", "model", "keys_url", "local")}
                   for pid, p in PROVIDERS.items()}
+        for aid, a in AGENTS.items():
+            public[aid].update(login=a["login"], install=a["install"], models=a["models"])
         return page(request, "settings.html", {"prompts": prompts, "models": models, "saved": saved,
                                                "data_dir": str(state.data_dir), "providers": PROVIDERS,
                                                "providers_json": json.dumps(public, ensure_ascii=False),
+                                               "providers_public": public,
                                                "provider": provider, "key_state": key_state,
                                                "key_saved": bool(saved_key)})
 
@@ -271,11 +275,12 @@ def create_app(base_dir: Path | None = None, deps: Deps | None = None, start_wor
             foreign = (not posted_url or (provider == "ollama" and not local_url)
                        or (provider not in ("ollama", "lmstudio", "custom")
                            and provider_for(preset["backend"], posted_url) != provider)
-                       or (provider == "anthropic" and local_url))
+                       or (provider == "anthropic" and local_url)
+                       or (preset["backend"] == "cli" and agent_for_command(posted_url) != provider))
             if preset["base_url"] and foreign:
                 state.db.set_setting("llm.base_url", preset["base_url"])
             if provider != prev_provider:  # сменили провайдера: модель — из пресета, если её не меняли
-                if preset["model"] and str(body.get("llm_model", "")).strip() in ("", prev_cfg["llm"]["model"]):
+                if str(body.get("llm_model", "")).strip() in ("", prev_cfg["llm"]["model"]):
                     state.db.set_setting("llm.model", preset["model"])
             # ключ привязан к провайдеру, определённому по сохранённому адресу
             cfg_now = state.config()
